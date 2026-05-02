@@ -9,7 +9,7 @@ from collections import deque
 from datetime import datetime
 import threading
 
-# ================= CONFIG =================
+# CONFIG
 BASE_URL = "https://app.previsao.io/api/v1"
 
 MARKET_ID = 52605
@@ -21,17 +21,16 @@ SLEEP_TIME = 10
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= ENV =================
+# ENV
 API_KEY = os.getenv("PREVISAO_API_KEY")
 API_SECRET = os.getenv("PREVISAO_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-if not all([API_KEY, API_SECRET, TELEGRAM_TOKEN]):
-    raise Exception("Configure as variáveis de ambiente!")
+if not API_KEY or not API_SECRET or not TELEGRAM_TOKEN:
+    raise Exception("Configure as variáveis de ambiente")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# ================= STATE =================
 usuarios = set()
 
 @dataclass
@@ -41,138 +40,98 @@ class Conta:
 
 conta = Conta()
 
-# ================= AUTH =================
+# AUTH
 def gerar_headers():
     raw = f"{API_KEY}:{API_SECRET}"
     token = base64.b64encode(raw.encode()).decode()
 
     return {
         "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json"
+        "Accept": "application/json"
     }
 
-# ================= API =================
+# API
 def get_orderbook():
-    url = f"{BASE_URL}/orderbook"
-
-    params = {
-        "marketId": MARKET_ID,
-        "limit": 50
-    }
-
     response = requests.get(
-        url,
+        f"{BASE_URL}/orderbook",
         headers=gerar_headers(),
-        params=params,
+        params={"marketId": MARKET_ID, "limit": 50},
         timeout=5
     )
-
     response.raise_for_status()
     return response.json()
 
 def get_market():
-    url = f"{BASE_URL}/markets/{MARKET_ID}"
-
-    response = requests.get(url, headers=gerar_headers(), timeout=5)
+    response = requests.get(
+        f"{BASE_URL}/markets/{MARKET_ID}",
+        headers=gerar_headers(),
+        timeout=5
+    )
     response.raise_for_status()
-
     return response.json()["data"]
 
-# ================= ANALYSIS =================
+# ANALYSIS
 def calcular_pressao(orderbook):
-    volume_sobe = 0
-    volume_desce = 0
+    sobe = 0
+    desce = 0
 
-    for selection in orderbook.get("selections", []):
-        selection_id = selection["selectionId"]
+    for sel in orderbook.get("selections", []):
+        total = 0
 
-        bids = selection.get("bids", [])
-        asks = selection.get("asks", [])
+        for b in sel.get("bids", []):
+            total += float(b["quantity"])
 
-        volume_total = 0
+        for a in sel.get("asks", []):
+            total += float(a["quantity"])
 
-        for b in bids:
-            volume_total += float(b["quantity"])
+        if sel["selectionId"] == SELECTION_SOBE:
+            sobe = total
+        elif sel["selectionId"] == SELECTION_DESCE:
+            desce = total
 
-        for a in asks:
-            volume_total += float(a["quantity"])
+    total = sobe + desce
+    return (sobe - desce) / total if total > 0 else 0
 
-        if selection_id == SELECTION_SOBE:
-            volume_sobe = volume_total
-        elif selection_id == SELECTION_DESCE:
-            volume_desce = volume_total
-
-    total = volume_sobe + volume_desce
-    if total == 0:
-        return 0
-
-    return (volume_sobe - volume_desce) / total
-
-def detectar_lateralizacao(historico):
-    if len(historico) < 10:
-        return False
-
-    ultimos = list(historico)[-10:]
-    return (max(ultimos) - min(ultimos)) < 0.08
-
-def detectar_sinal(orderbook, historico):
+def detectar_sinal(orderbook, hist):
     pressao = calcular_pressao(orderbook)
-    historico.append(pressao)
+    hist.append(pressao)
 
-    if detectar_lateralizacao(historico):
-        return None
+    if len(hist) >= 10:
+        if max(hist) - min(hist) < 0.08:
+            return None
 
     if pressao > 0.25:
-        return {
-            "direcao": "UP",
-            "confianca": int(min(100, pressao * 200)),
-            "motivo": "Pressão dominante em SOBE"
-        }
+        return ("UP", int(min(100, pressao * 200)))
 
-    elif pressao < -0.25:
-        return {
-            "direcao": "DOWN",
-            "confianca": int(min(100, abs(pressao) * 200)),
-            "motivo": "Pressão dominante em DESCE"
-        }
+    if pressao < -0.25:
+        return ("DOWN", int(min(100, abs(pressao) * 200)))
 
     return None
 
-# ================= TIME =================
+# TIME
 def mercado_ativo(market):
     agora = datetime.now().astimezone()
     opens = datetime.fromisoformat(market["opensAt"])
     closes = datetime.fromisoformat(market["closesAt"])
     return opens <= agora <= closes
 
-# ================= RISK =================
-def valor_entrada():
-    return round(conta.banca * conta.risco, 2)
+# TELEGRAM
+def enviar(chat_id, direcao, confianca):
+    valor = round(conta.banca * conta.risco, 2)
 
-# ================= TELEGRAM =================
-def enviar_sinal(chat_id, sinal):
-    valor = valor_entrada()
+    msg = (
+        f"🚨 SINAL\n\n"
+        f"Direção: {direcao}\n"
+        f"Confiança: {confianca}%\n\n"
+        f"Entrada: R${valor}"
+    )
 
-    msg = f"""
-🚨 SINAL VALIDADO
-
-📊 Direção: {sinal['direcao']}
-🔥 Confiança: {sinal['confianca']}%
-
-💰 Entrada sugerida: R${valor}
-
-📈 Motivo:
-{sinal['motivo']}
-
-💼 Banca: R${conta.banca:.2f}
-"""
     bot.send_message(chat_id, msg)
 
-# ================= LOOP GLOBAL =================
+# LOOP
 def loop_global():
-    historico = deque(maxlen=50)
-    ultimo_sinal = None
+    hist = deque(maxlen=50)
+    ultimo = None
 
     while True:
         try:
@@ -183,45 +142,41 @@ def loop_global():
                 continue
 
             orderbook = get_orderbook()
-            sinal = detectar_sinal(orderbook, historico)
+            sinal = detectar_sinal(orderbook, hist)
 
-            if sinal and sinal["confianca"] >= CONFIDENCE_THRESHOLD:
+            if sinal:
+                direcao, conf = sinal
 
-                if ultimo_sinal != sinal["direcao"]:
+                if conf >= CONFIDENCE_THRESHOLD and direcao != ultimo:
+                    for u in usuarios:
+                        enviar(u, direcao, conf)
 
-                    for chat_id in usuarios:
-                        enviar_sinal(chat_id, sinal)
-
-                    ultimo_sinal = sinal["direcao"]
+                    ultimo = direcao
 
             time.sleep(SLEEP_TIME)
 
         except Exception as e:
-            logging.error(f"Erro loop: {e}")
+            print("Erro:", e)
             time.sleep(5)
 
-# ================= TELEGRAM HANDLER =================
+# TELEGRAM HANDLER
 @bot.message_handler(commands=['start'])
 def start(msg):
     chat_id = msg.chat.id
+    usuarios.add(chat_id)
+    bot.send_message(chat_id, "🚀 Bot ativado")
 
-    if chat_id in usuarios:
-        bot.send_message(chat_id, "⚠️ Bot já está ativo")
-    else:
-        usuarios.add(chat_id)
-        bot.send_message(chat_id, "🚀 Bot ativado! Você receberá sinais automaticamente.")
-
-# ================= START =================
+# START
 if __name__ == "__main__":
     bot.remove_webhook()
 
     threading.Thread(target=loop_global, daemon=True).start()
 
-    print("🚀 Bot rodando no Railway")
+    print("Bot rodando...")
 
     while True:
         try:
-            bot.polling(none_stop=True, timeout=20)
+            bot.polling(none_stop=True)
         except Exception as e:
-            logging.error(f"Erro polling: {e}")
+            print("Erro polling:", e)
             time.sleep(5)
