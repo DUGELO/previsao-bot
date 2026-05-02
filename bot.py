@@ -210,9 +210,19 @@ def start(msg):
     run_bot(msg.chat.id)
 
 # ================= START =================
-while True:
-    try:
-        bot.polling(none_stop=True)
-    except Exception as e:
-        logging.error(e)
-        time.sleep(5)
+import threading
+
+def start_bot():
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=0, timeout=20)
+        except Exception as e:
+            print(f"Erro polling: {e}")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    threading.Thread(target=start_bot).start()
+    print("🚀 Bot iniciado no Railway")
+
+    while True:
+        time.sleep(60)
