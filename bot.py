@@ -77,6 +77,8 @@ def get_market():
 def calcular_imbalance(orderbook):
     sobe = 0
     desce = 0
+    logging.info(f"SOBE: {sobe} | DESCE: {desce}")
+    log_telegram(f"SOBE: {sobe} | DESCE: {desce}")
 
     for sel in orderbook.get("selections", []):
         total_bid = sum(float(b["quantity"]) for b in sel.get("bids", []))
