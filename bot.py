@@ -128,6 +128,22 @@ def enviar(chat_id, direcao, confianca, motivo):
     )
     bot.send_message(chat_id, msg)
 
+# ================= LOG TELEGRAM =================
+LOG_CHAT_ID = None
+
+def log_telegram(msg):
+    if LOG_CHAT_ID:
+        try:
+            bot.send_message(LOG_CHAT_ID, msg)
+        except Exception as e:
+            logging.error(f"Erro log telegram: {e}")
+
+@bot.message_handler(commands=['logs'])
+def ativar_logs(msg):
+    global LOG_CHAT_ID
+    LOG_CHAT_ID = msg.chat.id
+    bot.send_message(msg.chat.id, "📡 Logs ativados")
+
 # ================= STATUS =================
 @bot.message_handler(commands=['status'])
 def status(msg):
@@ -145,7 +161,7 @@ def status(msg):
 @bot.message_handler(commands=['start'])
 def start(msg):
     usuarios.add(msg.chat.id)
-    bot.send_message(msg.chat.id, "🚀 Bot ativado")
+    bot.send_message(msg.chat.id, "🚀 Bot 2.0 ativado")
 
 # ================= LOOP =================
 def loop_global():
@@ -165,9 +181,11 @@ def loop_global():
             hist.append(imbalance)
             estado.ultimo_imbalance = imbalance
 
-            # heartbeat
+            # 🔥 HEARTBEAT (LOG CONTROLADO)
             if time.time() - estado.ultimo_heartbeat > 30:
-                logging.info(f"Heartbeat | Imbalance: {imbalance:.4f}")
+                msg = f"📊 Imbalance: {imbalance:.4f}"
+                logging.info(msg)
+                log_telegram(msg)
                 estado.ultimo_heartbeat = time.time()
 
             sinal = detectar_sinal(hist)
@@ -188,12 +206,15 @@ def loop_global():
                     estado.ultimo_sinal = direcao
                     estado.ultimo_envio = agora
 
+                    log_telegram(f"🚨 SINAL {direcao} | {conf}%")
                     logging.info(f"SINAL {direcao} | {conf}%")
 
             time.sleep(SLEEP_TIME)
 
         except Exception as e:
-            logging.error(f"Erro loop: {e}")
+            erro = f"❌ Erro loop: {e}"
+            logging.error(erro)
+            log_telegram(erro)
             time.sleep(5)
 
 # ================= START APP =================
@@ -203,10 +224,13 @@ if __name__ == "__main__":
     threading.Thread(target=loop_global, daemon=True).start()
 
     logging.info("Bot rodando...")
+    log_telegram("🚀 Bot iniciado")
 
     while True:
         try:
             bot.polling(none_stop=True)
         except Exception as e:
-            logging.error(f"Erro polling: {e}")
+            erro = f"❌ Erro polling: {e}"
+            logging.error(erro)
+            log_telegram(erro)
             time.sleep(5)
