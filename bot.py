@@ -63,6 +63,8 @@ def get_orderbook():
     return r.json()
 
 def get_market():
+    logging.info("Chamando API market...")
+    log_telegram("Chamando API market...")
     r = requests.get(
         f"{BASE_URL}/markets/{MARKET_ID}",
         headers=gerar_headers(),
@@ -171,9 +173,10 @@ def loop_global():
         try:
             market = get_market()
 
-            if not mercado_ativo(market):
-                time.sleep(5)
-                continue
+            # TEMP DEBUG
+            # if not mercado_ativo(market):
+            #     time.sleep(5)
+            #     continue
 
             orderbook = get_orderbook()
             imbalance = calcular_imbalance(orderbook)
