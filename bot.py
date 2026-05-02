@@ -60,7 +60,14 @@ def get_orderbook():
         timeout=5
     )
     r.raise_for_status()
-    return r.json()
+
+    data = r.json()
+
+    # 🔥 DEBUG AQUI
+    logging.info(f"ORDERBOOK RAW: {data}")
+    log_telegram(f"ORDERBOOK RAW: {str(data)[:300]}")
+
+    return data
 
 def get_market():
     logging.info("Chamando API market...")
